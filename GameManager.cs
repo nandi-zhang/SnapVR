@@ -57,11 +57,13 @@ public class GameManager : MonoBehaviour
     float period = 0f;
 
     List<HandPresence> virtualHands;
+    public List<Vector3> kfSequence;
 
     void Start() {
         UpdateGameState(GameState.Intro);
         Marks = new List<GameObject>();
         virtualHands = new List<HandPresence>();
+        kfSequence = new List<Vector3>();
         positionA = new Vector3(-0.27f, 0.64f, 0.1f);
         positionB = new Vector3(0.216f, 0.64f, 0.187f);
     }
@@ -72,9 +74,21 @@ public class GameManager : MonoBehaviour
 
     void Update()
     {
-        if(marking || State == GameState.StartDemo){
+        if(marking || State == GameState.StartDemo)  {
             if(period > 0.5f){
                 Marks.Add(Instantiate(Mark, Target.transform.position, Quaternion.identity));
+                if(State == GameState.StartDemo) {
+                    if(kfSequence.Count == 0) {
+                        if((Target.transform.position - startPosition).magnitude > 0.02f) {
+                            kfSequence.Add(Target.transform.position);
+                        }
+                    }
+                    else {
+                        if((Target.transform.position - kfSequence[kfSequence.Count - 1]).magnitude > 0.02f) {
+                            kfSequence.Add(Target.transform.position);
+                        }
+                    }
+                }
                 period = 0f;
             }
             period += UnityEngine.Time.deltaTime;
@@ -240,6 +254,9 @@ public class GameManager : MonoBehaviour
             case "collaboration":
                 UpdateGameState(GameState.Collaboration);
                 break;
+            case "clear":
+                ClearMarks();
+                break;
             default:
                 text2.text = "Sorry, can you say that again?";
                 break;
@@ -368,6 +385,12 @@ public class GameManager : MonoBehaviour
                      "End the demonstration.       Start a demonstration.";
         endPosition = Target.transform.position;
         TargetPlacement.transform.position = endPosition;
+    }
+
+    private void ClearMarks() {
+        foreach(GameObject t in Marks) {
+                Destroy(t.gameObject);
+        }
     }
 
     private void RobotDemo() {

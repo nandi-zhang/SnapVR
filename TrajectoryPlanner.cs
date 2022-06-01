@@ -5,6 +5,7 @@ using RosMessageTypes.Geometry;
 using RosMessageTypes.NiryoMoveit;
 using Unity.Robotics.ROSTCPConnector;
 using Unity.Robotics.ROSTCPConnector.ROSGeometry;
+using System.Collections.Generic;
 using UnityEngine;
 
 public class TrajectoryPlanner : MonoBehaviour
@@ -40,6 +41,8 @@ public class TrajectoryPlanner : MonoBehaviour
 
     // ROS Connector
     ROSConnection m_Ros;
+
+    public GameManager instance;
 
     /// <summary>
     ///     Find all robot joints in Awake() and add them to the jointArticulationBodies array.
@@ -361,7 +364,7 @@ public class TrajectoryPlanner : MonoBehaviour
         }
         else
         {
-            PublishJoints();
+            // PublishJoints();
             Debug.Log("No trajectory returned from MoverService.");
         }
     }
@@ -402,7 +405,7 @@ public class TrajectoryPlanner : MonoBehaviour
                 yield return new WaitForSeconds(k_PoseAssignmentWait);
             }
         }
-        PublishJoints();
+        PublishJointsWithValidation();
     }
 
     //////////////////////////////////////////////////////////////////////////////////////
@@ -472,6 +475,173 @@ public class TrajectoryPlanner : MonoBehaviour
         }
     }
 
+////////////////////////////////Validation/////////////////////////////////////////////////
+
+    public void Validate(List<Vector3> sequence) {
+        for (var index = 0; index < sequence.Count - 1; index++){
+            var request = Validation(sequence[index], sequence[index + 1]);
+            m_Ros.SendServiceMessage<MoverServiceResponse>(m_RosServiceName, request, TrajectoryResponseValidation);
+        }
+    }
+
+    public MoverServiceRequest Validation(Vector3 kfPosition1, Vector3 kfPosition2) {
+        var request = new MoverServiceRequest();
+        request.joints_input = CurrentJointConfig();
+
+        // Pick Pose
+        request.pick_pose = new PoseMsg
+        {
+            position = (kfPosition1).To<FLU>(),
+
+            // The hardcoded x/z angles assure that the gripper is always positioned above the target cube before grasping.
+            orientation = Quaternion.identity.To<FLU>()
+        };
+
+        // Place Pose
+        request.place_pose = new PoseMsg
+        {
+            position = (kfPosition2).To<FLU>(),
+            orientation = Quaternion.identity.To<FLU>()
+        };
+
+        return request;
+    }
+
+    void TrajectoryResponseValidation(MoverServiceResponse response)
+    {
+        if (response.trajectories.Length > 0)
+        {
+            Debug.Log("Trajectory returned.");
+            StartCoroutine(ExecuteTrajectoriesValidation(response));
+        }
+        else
+        {
+            Debug.Log("No trajectory returned from MoverService.");
+        }
+    }
+
+    IEnumerator ExecuteTrajectoriesValidation(MoverServiceResponse response)
+    {
+        if (response.trajectories != null)
+        {
+            // For every trajectory plan returned
+            for (var poseIndex = 0; poseIndex < response.trajectories.Length; poseIndex++)
+            {
+                // For every robot pose in trajectory plan
+                foreach (var t in response.trajectories[poseIndex].joint_trajectory.points)
+                {
+                    var jointPositions = t.positions;
+                    var result = jointPositions.Select(r => (float)r * Mathf.Rad2Deg).ToArray();
+
+                    // Set the joint values for every joint
+                    for (var joint = 0; joint < m_JointArticulationBodies.Length; joint++)
+                    {
+                        var joint1XDrive = m_JointArticulationBodies[joint].xDrive;
+                        joint1XDrive.target = result[joint];
+                        m_JointArticulationBodies[joint].xDrive = joint1XDrive;
+                    }
+
+                    // Wait for robot to achieve pose for all joint assignments
+                    yield return new WaitForSeconds(k_JointAssignmentWait);
+                }
+
+                // Wait for the robot to achieve the final pose from joint assignment
+                yield return new WaitForSeconds(k_PoseAssignmentWait);
+            }
+        }
+    }
+
+    public void PublishJointsWithValidation()
+    {
+        var request = new MoverServiceRequest();
+        request.joints_input = CurrentJointConfig();
+
+        // Pick Pose
+        request.pick_pose = new PoseMsg
+        {
+            position = (m_Target.transform.position + m_PickPoseOffset).To<FLU>(),
+
+            // The hardcoded x/z angles assure that the gripper is always positioned above the target cube before grasping.
+            orientation = Quaternion.Euler(90, m_Target.transform.eulerAngles.y, 0).To<FLU>()
+        };
+
+        // Place Pose
+        request.place_pose = new PoseMsg
+        {
+            position = (m_TargetPlacement.transform.position + m_PickPoseOffset).To<FLU>(),
+            orientation = m_PickOrientation.To<FLU>()
+        };
+
+        m_Ros.SendServiceMessage<MoverServiceResponse>(m_RosServiceName, request, TrajectoryResponseWithValidation);
+    }
+
+    void TrajectoryResponseWithValidation(MoverServiceResponse response)
+    {
+        if (response.trajectories.Length > 0)
+        {
+            Debug.Log("Trajectory returned.");
+            StartCoroutine(ExecuteTrajectoriesWithValidation(response));
+        }
+        else
+        {
+            Debug.Log("No trajectory returned from MoverService.");
+        }
+    }
+
+    /// <summary>
+    ///     Execute the returned trajectories from the MoverService.
+    ///     The expectation is that the MoverService will return four trajectory plans,
+    ///     PreGrasp, Grasp, PickUp, and Place,
+    ///     where each plan is an array of robot poses. A robot pose is the joint angle values
+    ///     of the six robot joints.
+    ///     Executing a single trajectory will iterate through every robot pose in the array while updating the
+    ///     joint values on the robot.
+    /// </summary>
+    /// <param name="response"> MoverServiceResponse received from niryo_moveit mover service running in ROS</param>
+    /// <returns></returns>
+    IEnumerator ExecuteTrajectoriesWithValidation(MoverServiceResponse response)
+    {
+        if (response.trajectories != null)
+        {
+            OpenGripper();
+            // For every trajectory plan returned
+            for (var poseIndex = 0; poseIndex < response.trajectories.Length; poseIndex++)
+            {
+                // For every robot pose in trajectory plan
+                foreach (var t in response.trajectories[poseIndex].joint_trajectory.points)
+                {
+                    var jointPositions = t.positions;
+                    var result = jointPositions.Select(r => (float)r * Mathf.Rad2Deg).ToArray();
+
+                    // Set the joint values for every joint
+                    for (var joint = 0; joint < m_JointArticulationBodies.Length; joint++)
+                    {
+                        var joint1XDrive = m_JointArticulationBodies[joint].xDrive;
+                        joint1XDrive.target = result[joint];
+                        m_JointArticulationBodies[joint].xDrive = joint1XDrive;
+                    }
+
+                    // Wait for robot to achieve pose for all joint assignments
+                    yield return new WaitForSeconds(k_JointAssignmentWait);
+                }
+
+                // Close the gripper if completed executing the trajectory for the Grasp pose
+                if (poseIndex == (int)Poses.Grasp)
+                {
+                    CloseGripper();
+                    break;
+                }
+
+                // Wait for the robot to achieve the final pose from joint assignment
+                yield return new WaitForSeconds(k_PoseAssignmentWait);
+            }
+
+            Validate(instance.kfSequence);
+
+            // All trajectories have been executed, open the gripper to place the target cube
+            OpenGripper();
+        }
+    }
     enum Poses
     {
         PreGrasp,
