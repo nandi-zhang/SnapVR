@@ -1,6 +1,6 @@
 # SnapVR
 
-SnapVR is a prototype implementation of a robot authoring system for novice users that mainly targets collaborative tasks. By taking snapshots of users' actions, SnapVR enables users to program robot to assist in collaborative tasks by demonstration independently.
+SnapVR is a prototypical implementation of a robot authoring system for novice users that mainly targets collaborative tasks. By taking snapshots of users' actions, SnapVR enables users to program robot to assist in collaborative tasks by demonstration independently.
 
 Video Demo link: https://www.youtube.com/watch?v=hAN93H7TwHA
 
